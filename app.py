@@ -13,6 +13,7 @@ def convert_time(timestamp):
 
 def get_transaction_by_txid(txid, network):
     try:
+        print(f"Fetching transaction {txid} from {network}")
         if network == "ethereum":
             url = f"https://api.etherscan.io/api?module=proxy&action=eth_getTransactionByHash&txhash={txid}&apikey=YOUR_ETHERSCAN_API_KEY"
         elif network == "bitcoin":
@@ -25,7 +26,7 @@ def get_transaction_by_txid(txid, network):
         response = requests.get(url)
         data = response.json()
 
-        print(f"🔍 API Response for {txid}: {data}")  # Debugging
+        print(f"🔍 API Response for {txid}: {data}")
 
         if isinstance(data, str):  
             return {"error": "Invalid response format from API"}
