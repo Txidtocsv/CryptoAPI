@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import requests
 import pandas as pd
 from datetime import datetime
@@ -89,6 +89,13 @@ def get_multiple_transactions():
     except Exception as e:
         print(f"❌ ERROR: {str(e)}")
         return jsonify({"error": "Internal Server Error", "details": str(e)}), 500
+
+@app.route("/download", methods=["GET"])
+def download_file():
+    try:
+        return send_file("transactions.xlsx", as_attachment=True)
+    except Exception as e:
+        return jsonify({"error": "File not found", "details": str(e)}), 404
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
