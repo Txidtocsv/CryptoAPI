@@ -5,9 +5,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-BLOCKCHAIR_API = "https://api.blockchair.com"
-CHAINLIST_API = "https://chainid.network/chains.json"
-ONERPC_API = "https://1rpc.io"
+BLOCKCHAIR_API_URL = "https://api.blockchair.com"
 
 def convert_time(timestamp):
     try:
@@ -15,45 +13,48 @@ def convert_time(timestamp):
     except:
         return "N/A"
 
-def get_network_by_txid(txid):
+def detect_network(txid):
     try:
-        response = requests.get(CHAINLIST_API)
-        chains = response.json()
-        for chain in chains:
-            if "explorers" in chain:
-                for explorer in chain["explorers"]:
-                    if explorer["url"].startswith("https://api"):
-                        return chain["name"], explorer["url"].replace("{tx}", txid)
-        return "Unknown", None
-    except Exception as e:
-        print(f"Error fetching network: {str(e)}")
-        return "Unknown", None
+        response = requests.get(f"{BLOCKCHAIR_API_URL}/ethereum/dashboards/transaction/{txid}")
+        if response.status_code == 200:
+            return "Ethereum Mainnet"
+        
+        response = requests.get(f"{BLOCKCHAIR_API_URL}/bitcoin/dashboards/transaction/{txid}")
+        if response.status_code == 200:
+            return "Bitcoin"
+        
+        response = requests.get(f"{BLOCKCHAIR_API_URL}/dash/dashboards/transaction/{txid}")
+        if response.status_code == 200:
+            return "Dash"
+        
+        response = requests.get(f"{BLOCKCHAIR_API_URL}/litecoin/dashboards/transaction/{txid}")
+        if response.status_code == 200:
+            return "Litecoin"
+        
+        return "Unknown"
+    except:
+        return "Unknown"
 
 def get_transaction_by_txid(txid):
-    network, explorer_url = get_network_by_txid(txid)
-    
+    network = detect_network(txid)
     if network == "Unknown":
         return {"TxID": txid, "Network": "Unknown", "From": "N/A", "To": "N/A", "Amount": "N/A", "Status": "Failed"}
 
     try:
-        response = requests.get(explorer_url)
+        response = requests.get(f"{BLOCKCHAIR_API_URL}/ethereum/dashboards/transaction/{txid}")
         data = response.json()
+        
+        tx_data = data["data"][txid]["transaction"]
 
-        if "data" in data and txid in data["data"]:
-            tx = data["data"][txid]
-            return {
-                "TxID": txid,
-                "Network": network,
-                "From": tx.get("sender", "N/A"),
-                "To": tx.get("recipient", "N/A"),
-                "Amount": tx.get("value", "N/A"),
-                "Status": "Success" if tx.get("confirmations", 0) > 0 else "Pending"
-            }
-
-        return {"TxID": txid, "Network": network, "From": "N/A", "To": "N/A", "Amount": "N/A", "Status": "Failed"}
-    
+        return {
+            "TxID": txid,
+            "Network": network,
+            "From": tx_data.get("sender", "N/A"),
+            "To": tx_data.get("recipient", "N/A"),
+            "Amount": float(tx_data.get("value", 0)) / 1e18 if "value" in tx_data else "N/A",
+            "Status": "Success" if not tx_data.get("failed") else "Failed"
+        }
     except Exception as e:
-        print(f"Error fetching transaction: {str(e)}")
         return {"TxID": txid, "Network": network, "From": "N/A", "To": "N/A", "Amount": "N/A", "Status": "Failed"}
 
 @app.route("/transactions", methods=["POST"])
@@ -73,7 +74,6 @@ def get_multiple_transactions():
 
         return jsonify({"message": "File generated", "file": file_path})
     except Exception as e:
-        print(f"Error: {str(e)}")
         return jsonify({"error": "Internal Server Error", "details": str(e)}), 500
 
 @app.route("/download", methods=["GET"])
