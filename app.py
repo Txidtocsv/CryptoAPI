@@ -1,78 +1,56 @@
 from flask import Flask, request, jsonify, send_file
 import requests
 import pandas as pd
-from web3 import Web3
-import json
-from datetime import datetime
+import os
 
 app = Flask(__name__)
 
-BLOCKCHAIN_EXPLORERS = [
-    "https://api.blockchair.com/{}/dashboards/transaction/{}",
-    "https://blockscout.com/{}/api?module=transaction&action=gettxinfo&txhash={}",
-    "https://api.blockcypher.com/v1/{}/main/txs/{}",
-    "https://api.trongrid.io/v1/transactions/{}",
-    "https://s1.ripple.com:51234/"
-]
+CHAINLIST_API = os.getenv("CHAINLIST_API")
+ANKR_API = os.getenv("ANKR_API")
+ALLCHAINS_API = os.getenv("ALLCHAINS_API")
+BLOCKCHAIR_API = os.getenv("BLOCKCHAIR_API")
+ONE_RPC_API = os.getenv("ONE_RPC_API")
 
-EVM_NETWORKS = {
-    "ethereum": "https://mainnet.infura.io/v3/YOUR_INFURA_API_KEY",
-    "bsc": "https://bsc-dataseed.binance.org/",
-    "polygon": "https://polygon-rpc.com/",
-    "avalanche": "https://api.avax.network/ext/bc/C/rpc",
-    "fantom": "https://rpc.ftm.tools/",
-    "optimism": "https://mainnet.optimism.io/",
-    "arbitrum": "https://arb1.arbitrum.io/rpc"
-}
-
-def convert_time(timestamp):
+def get_chain_info():
     try:
-        return datetime.utcfromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M:%S UTC')
-    except:
-        return "N/A"
+        response = requests.get(CHAINLIST_API)
+        chains = response.json()
+        return {str(chain["chainId"]): chain for chain in chains}
+    except Exception as e:
+        return {}
+
+CHAIN_INFO = get_chain_info()
 
 def detect_network(txid):
-    for explorer in BLOCKCHAIN_EXPLORERS:
-        for network in ["bitcoin", "ethereum", "bsc", "polygon", "litecoin", "dogecoin", "tron", "xrpl"]:
-            url = explorer.format(network, txid)
-            response = requests.get(url)
-            if response.status_code == 200:
-                data = response.json()
-                if "error" not in data:
-                    return network
-    return None
+    for chain_id, chain in CHAIN_INFO.items():
+        if chain.get("explorers"):
+            for explorer in chain["explorers"]:
+                api_url = explorer.get("url")
+                if api_url:
+                    tx_url = f"{api_url}/tx/{txid}"
+                    response = requests.get(tx_url)
+                    if response.status_code == 200:
+                        return chain["name"], chain_id
+    return "Unknown", None
 
-def get_transaction_by_txid(txid):
-    network = detect_network(txid)
-    
-    if network in EVM_NETWORKS:
-        w3 = Web3(Web3.HTTPProvider(EVM_NETWORKS[network]))
-        try:
-            tx = w3.eth.get_transaction(txid)
-            return {
-                "TxID": txid,
-                "Network": network,
-                "From": tx["from"],
-                "To": tx["to"],
-                "Amount (ETH)": Web3.from_wei(tx["value"], "ether"),
-                "Gas Fee": Web3.from_wei(tx["gasPrice"], "ether"),
-                "Status": "Success"
-            }
-        except:
-            return {"TxID": txid, "error": "Transaction not found"}
+def fetch_transaction_data(txid):
+    network, chain_id = detect_network(txid)
+    if network == "Unknown":
+        return {"TxID": txid, "Error": "Network not found"}
 
-    for explorer in BLOCKCHAIN_EXPLORERS:
-        url = explorer.format(network, txid)
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            return {
-                "TxID": txid,
-                "Network": network,
-                "Data": data
-            }
-
-    return {"TxID": txid, "error": "Transaction not found"}
+    try:
+        response = requests.post(ANKR_API, json={"jsonrpc": "2.0", "method": "eth_getTransactionByHash", "params": [txid], "id": 1})
+        data = response.json().get("result", {})
+        return {
+            "TxID": txid,
+            "Network": network,
+            "From": data.get("from", "N/A"),
+            "To": data.get("to", "N/A"),
+            "Amount": int(data.get("value", "0"), 16) / 1e18 if "value" in data else "N/A",
+            "Status": "Success" if data else "Failed"
+        }
+    except Exception as e:
+        return {"TxID": txid, "Error": str(e)}
 
 @app.route("/transactions", methods=["POST"])
 def get_multiple_transactions():
@@ -83,11 +61,7 @@ def get_multiple_transactions():
         if not txids:
             return jsonify({"error": "Missing txids"}), 400
 
-        transactions = [get_transaction_by_txid(txid) for txid in txids]
-        transactions = [tx for tx in transactions if tx]
-
-        if not transactions:
-            return jsonify({"message": "No transactions found"}), 404
+        transactions = [fetch_transaction_data(txid) for txid in txids]
 
         df = pd.DataFrame(transactions)
         file_path = "transactions.xlsx"
