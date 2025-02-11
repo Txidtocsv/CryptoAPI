@@ -14,12 +14,13 @@ def convert_time(timestamp):
 def get_transaction_by_txid(txid, network):
     try:
         print(f"Fetching transaction {txid} from {network}")
+
         if network == "ethereum":
-            url = f"https://api.etherscan.io/api?module=proxy&action=eth_getTransactionByHash&txhash={txid}&apikey=YOUR_ETHERSCAN_API_KEY"
+            url = f"https://blockscout.com/eth/mainnet/api?module=transaction&action=gettxinfo&txhash={txid}"
         elif network == "bitcoin":
-            url = f"https://api.blockchair.com/bitcoin/dashboards/transaction/{txid}"
+            url = f"https://mempool.space/api/tx/{txid}"
         elif network == "tron":
-            url = f"https://api.trongrid.io/v1/transactions/{txid}"
+            url = f"https://apilist.tronscan.org/api/transaction-info?hash={txid}"
         else:
             return {"error": "Unsupported network"}
 
@@ -28,38 +29,32 @@ def get_transaction_by_txid(txid, network):
 
         print(f"🔍 API Response for {txid}: {data}")
 
-        if isinstance(data, str):  
-            return {"error": "Invalid response format from API"}
+        if "error" in data:
+            return {"error": "Failed to fetch data"}
 
         if network == "ethereum":
-            tx = data.get("result", {})
             return {
                 "TxID": txid,
-                "Date": "Unknown",
-                "From": tx.get("from", "N/A"),
-                "To": tx.get("to", "N/A"),
-                "Amount (ETH)": float(int(tx.get("value", "0"), 16)) / 1e18 if "value" in tx else "N/A",
-                "Gas Fee (ETH)": float(int(tx.get("gasPrice", "0"), 16)) / 1e18 if "gasPrice" in tx else "N/A",
+                "From": data.get("result", {}).get("from", "N/A"),
+                "To": data.get("result", {}).get("to", "N/A"),
+                "Amount (ETH)": float(int(data.get("result", {}).get("value", "0"), 16)) / 1e18 if "value" in data.get("result", {}) else "N/A",
                 "Status": "Success"
             }
         elif network == "bitcoin":
-            tx = data.get("data", {}).get(txid, {}).get("transaction", {})
             return {
                 "TxID": txid,
-                "Date": convert_time(tx.get("time")),
-                "Amount (BTC)": tx.get("balance_change", "N/A"),
-                "Fee (BTC)": tx.get("fee", "N/A"),
-                "Status": "Confirmed"
+                "Date": convert_time(data.get("time", 0)),
+                "Amount (BTC)": sum(output["value"] for output in data.get("vout", [])) / 1e8,
+                "Fee (BTC)": data.get("fee", "N/A"),
+                "Status": "Confirmed" if data.get("status", {}).get("confirmed", False) else "Pending"
             }
         elif network == "tron":
-            tx = data.get("data", [{}])[0]
             return {
                 "TxID": txid,
-                "Date": convert_time(tx.get("block_timestamp", 0) / 1000),
-                "From": tx.get("owner_address", "N/A"),
-                "To": tx.get("to_address", "N/A"),
-                "Amount (TRX)": float(tx.get("amount", 0)) / 1e6 if "amount" in tx else "N/A",
-                "Status": "Success" if tx.get("confirmed") else "Pending"
+                "From": data.get("ownerAddress", "N/A"),
+                "To": data.get("toAddress", "N/A"),
+                "Amount (TRX)": float(data.get("amount", 0)) / 1e6 if "amount" in data else "N/A",
+                "Status": "Success" if data.get("confirmed") else "Pending"
             }
 
     except Exception as e:
