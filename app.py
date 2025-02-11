@@ -1,9 +1,29 @@
 from flask import Flask, request, jsonify, send_file
 import requests
 import pandas as pd
+from web3 import Web3
+import json
 from datetime import datetime
 
 app = Flask(__name__)
+
+BLOCKCHAIN_EXPLORERS = [
+    "https://api.blockchair.com/{}/dashboards/transaction/{}",
+    "https://blockscout.com/{}/api?module=transaction&action=gettxinfo&txhash={}",
+    "https://api.blockcypher.com/v1/{}/main/txs/{}",
+    "https://api.trongrid.io/v1/transactions/{}",
+    "https://s1.ripple.com:51234/"
+]
+
+EVM_NETWORKS = {
+    "ethereum": "https://mainnet.infura.io/v3/YOUR_INFURA_API_KEY",
+    "bsc": "https://bsc-dataseed.binance.org/",
+    "polygon": "https://polygon-rpc.com/",
+    "avalanche": "https://api.avax.network/ext/bc/C/rpc",
+    "fantom": "https://rpc.ftm.tools/",
+    "optimism": "https://mainnet.optimism.io/",
+    "arbitrum": "https://arb1.arbitrum.io/rpc"
+}
 
 def convert_time(timestamp):
     try:
@@ -11,67 +31,59 @@ def convert_time(timestamp):
     except:
         return "N/A"
 
-def get_transaction_by_txid(txid, network):
-    try:
-        print(f"Fetching transaction {txid} from {network}")
+def detect_network(txid):
+    for explorer in BLOCKCHAIN_EXPLORERS:
+        for network in ["bitcoin", "ethereum", "bsc", "polygon", "litecoin", "dogecoin", "tron", "xrpl"]:
+            url = explorer.format(network, txid)
+            response = requests.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                if "error" not in data:
+                    return network
+    return None
 
-        if network == "ethereum":
-            url = f"https://blockscout.com/eth/mainnet/api?module=transaction&action=gettxinfo&txhash={txid}"
-        elif network == "bitcoin":
-            url = f"https://mempool.space/api/tx/{txid}"
-        elif network == "tron":
-            url = f"https://apilist.tronscan.org/api/transaction-info?hash={txid}"
-        else:
-            return {"error": "Unsupported network"}
-
-        response = requests.get(url)
-        data = response.json()
-
-        print(f"🔍 API Response for {txid}: {data}")
-
-        if "error" in data:
-            return {"error": "Failed to fetch data"}
-
-        if network == "ethereum":
+def get_transaction_by_txid(txid):
+    network = detect_network(txid)
+    
+    if network in EVM_NETWORKS:
+        w3 = Web3(Web3.HTTPProvider(EVM_NETWORKS[network]))
+        try:
+            tx = w3.eth.get_transaction(txid)
             return {
                 "TxID": txid,
-                "From": data.get("result", {}).get("from", "N/A"),
-                "To": data.get("result", {}).get("to", "N/A"),
-                "Amount (ETH)": float(int(data.get("result", {}).get("value", "0"), 16)) / 1e18 if "value" in data.get("result", {}) else "N/A",
+                "Network": network,
+                "From": tx["from"],
+                "To": tx["to"],
+                "Amount (ETH)": Web3.from_wei(tx["value"], "ether"),
+                "Gas Fee": Web3.from_wei(tx["gasPrice"], "ether"),
                 "Status": "Success"
             }
-        elif network == "bitcoin":
+        except:
+            return {"TxID": txid, "error": "Transaction not found"}
+
+    for explorer in BLOCKCHAIN_EXPLORERS:
+        url = explorer.format(network, txid)
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
             return {
                 "TxID": txid,
-                "Date": convert_time(data.get("time", 0)),
-                "Amount (BTC)": sum(output["value"] for output in data.get("vout", [])) / 1e8,
-                "Fee (BTC)": data.get("fee", "N/A"),
-                "Status": "Confirmed" if data.get("status", {}).get("confirmed", False) else "Pending"
-            }
-        elif network == "tron":
-            return {
-                "TxID": txid,
-                "From": data.get("ownerAddress", "N/A"),
-                "To": data.get("toAddress", "N/A"),
-                "Amount (TRX)": float(data.get("amount", 0)) / 1e6 if "amount" in data else "N/A",
-                "Status": "Success" if data.get("confirmed") else "Pending"
+                "Network": network,
+                "Data": data
             }
 
-    except Exception as e:
-        print(f"❌ ERROR in get_transaction_by_txid: {str(e)}")
-        return {"error": "Internal error fetching transaction"}
+    return {"TxID": txid, "error": "Transaction not found"}
 
 @app.route("/transactions", methods=["POST"])
 def get_multiple_transactions():
     try:
         data = request.json
         txids = data.get("txids", [])
-        network = data.get("network")
 
-        if not txids or not network:
-            return jsonify({"error": "Missing txids or network"}), 400
+        if not txids:
+            return jsonify({"error": "Missing txids"}), 400
 
-        transactions = [get_transaction_by_txid(txid, network) for txid in txids]
+        transactions = [get_transaction_by_txid(txid) for txid in txids]
         transactions = [tx for tx in transactions if tx]
 
         if not transactions:
@@ -83,20 +95,14 @@ def get_multiple_transactions():
 
         return jsonify({"message": "File generated", "file": file_path})
     except Exception as e:
-        print(f"❌ ERROR: {str(e)}")
         return jsonify({"error": "Internal Server Error", "details": str(e)}), 500
 
 @app.route("/download", methods=["GET"])
 def download_file():
     try:
-        return send_file(
-            "transactions.xlsx",
-            as_attachment=True,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        return send_file("transactions.xlsx", as_attachment=True)
     except Exception as e:
         return jsonify({"error": "File not found", "details": str(e)}), 404
-
 
 @app.route("/")
 def home():
