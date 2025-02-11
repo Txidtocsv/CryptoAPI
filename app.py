@@ -8,12 +8,18 @@ app = Flask(__name__)
 app.debug = True
 
 CHAINLIST_API = "https://chainid.network/chains.json"
+BLOCKCHAIR_API = "https://api.blockchair.com/"
+ALLCHAINS_API = "https://api.allchains.info/v1/chains"
+ONE_RPC_API = "https://1rpc.io"
 
 API_KEYS = {
     "ethereum": os.getenv("ETHERSCAN_API_KEY"),
+    "bitcoin": os.getenv("BLOCKCHAIR_API_KEY"),
     "binance": os.getenv("BSCSCAN_API_KEY"),
     "polygon": os.getenv("POLYGONSCAN_API_KEY"),
-    "cardano": os.getenv("BLOCKFROST_API_KEY")
+    "tron": os.getenv("TRONSCAN_API_KEY"),
+    "xrp": os.getenv("XRPSCAN_API_KEY"),
+    "solana": os.getenv("SOLSCAN_API_KEY")
 }
 
 def get_chain_data():
@@ -48,23 +54,21 @@ def get_transaction_by_txid(txid):
     if network == "unknown":
         return {"TxID": txid, "Network": "Unknown", "Status": "Failed"}
     try:
-        chains = get_chain_data()
-        for chain in chains:
-            if chain.get("shortName", "").lower() == network:
-                api_url = chain.get("rpc", [""])[0]
-                if api_url:
-                    response = requests.get(api_url)
-                    data = response.json()
-                    return {
-                        "TxID": txid,
-                        "Network": chain.get("name", "Unknown"),
-                        "From": data.get("from", "N/A"),
-                        "To": data.get("to", "N/A"),
-                        "Amount": data.get("value", "N/A"),
-                        "Timestamp": convert_time(data.get("timeStamp", "0")),
-                        "Fee": data.get("gasPrice", "N/A"),
-                        "Status": "Success"
-                    }
+        api_url = f"{BLOCKCHAIR_API}{network}/dashboards/transaction/{txid}"
+        response = requests.get(api_url)
+        data = response.json()
+        if "data" in data and txid in data["data"]:
+            tx_data = data["data"][txid]["transaction"]
+            return {
+                "TxID": txid,
+                "Network": network.capitalize(),
+                "From": tx_data.get("inputs", [{}])[0].get("recipient", "N/A"),
+                "To": tx_data.get("outputs", [{}])[0].get("recipient", "N/A"),
+                "Amount": tx_data.get("outputs", [{}])[0].get("value", "N/A"),
+                "Timestamp": convert_time(tx_data.get("time", "0")),
+                "Fee": tx_data.get("fee", "N/A"),
+                "Status": "Success"
+            }
     except:
         return {"error": "Internal error fetching transaction"}
 
