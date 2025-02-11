@@ -89,9 +89,14 @@ def get_multiple_transactions():
 @app.route("/download", methods=["GET"])
 def download_file():
     try:
-        return send_file("transactions.xlsx", as_attachment=True)
+        return send_file(
+            "transactions.xlsx",
+            as_attachment=True,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     except Exception as e:
         return jsonify({"error": "File not found", "details": str(e)}), 404
+
 
 @app.route("/")
 def home():
