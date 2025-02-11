@@ -9,17 +9,12 @@ app.debug = True
 
 CHAINLIST_API = "https://chainid.network/chains.json"
 BLOCKCHAIR_API = "https://api.blockchair.com/"
-ALLCHAINS_API = "https://api.allchains.info/v1/chains"
 
 API_KEYS = {
     "ethereum": os.getenv("ETHERSCAN_API_KEY"),
-    "bitcoin": os.getenv("BLOCKCHAIR_API_KEY"),
     "binance": os.getenv("BSCSCAN_API_KEY"),
     "polygon": os.getenv("POLYGONSCAN_API_KEY"),
-    "cardano": os.getenv("BLOCKFROST_API_KEY"),
-    "solana": os.getenv("SOLANA_API_KEY"),
-    "tron": os.getenv("TRONGRID_API_KEY"),
-    "xrp": os.getenv("XRPL_API_KEY")
+    "bitcoin": os.getenv("BLOCKCHAIR_API_KEY")
 }
 
 def get_chain_data():
@@ -53,21 +48,31 @@ def get_transaction_by_txid(txid):
     network = detect_network(txid)
     if network == "unknown":
         return {"TxID": txid, "Network": "Unknown", "Status": "Failed"}
+    
     try:
-        api_url = f"{BLOCKCHAIR_API}{network}/dashboards/transaction/{txid}"
-        response = requests.get(api_url)
-        if response.status_code == 200:
-            data = response.json()["data"][txid]
-            return {
-                "TxID": txid,
-                "Network": network.capitalize(),
-                "From": data.get("inputs", [{}])[0].get("recipient", "N/A"),
-                "To": data.get("outputs", [{}])[0].get("recipient", "N/A"),
-                "Amount": data.get("outputs", [{}])[0].get("value", "N/A"),
-                "Timestamp": convert_time(data.get("transaction", {}).get("time", "0")),
-                "Fee": data.get("transaction", {}).get("fee", "N/A"),
-                "Status": "Success"
-            }
+        if network == "bitcoin":
+            response = requests.get(f"{BLOCKCHAIR_API}{network}/dashboards/transaction/{txid}")
+            data = response.json()["data"][txid]["transaction"]
+        else:
+            chains = get_chain_data()
+            for chain in chains:
+                if chain.get("shortName", "").lower() == network:
+                    api_url = chain.get("rpc", [""])[0]
+                    if api_url:
+                        response = requests.get(api_url)
+                        data = response.json()
+                        break
+        
+        return {
+            "TxID": txid,
+            "Network": network.capitalize(),
+            "From": data.get("from", "N/A"),
+            "To": data.get("to", "N/A"),
+            "Amount": data.get("value", "N/A"),
+            "Timestamp": convert_time(data.get("timeStamp", "0")),
+            "Fee": data.get("gasPrice", "N/A"),
+            "Status": "Success"
+        }
     except:
         return {"TxID": txid, "Network": network.capitalize(), "Status": "Failed"}
 
