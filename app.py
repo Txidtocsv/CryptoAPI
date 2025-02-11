@@ -7,17 +7,7 @@ from datetime import datetime
 app = Flask(__name__)
 app.debug = True
 
-NETWORK_APIS = {
-    "bitcoin": "https://api.blockchair.com/bitcoin/dashboards/transaction/{txid}",
-    "ethereum": "https://api.etherscan.io/api?module=proxy&action=eth_getTransactionByHash&txhash={txid}&apikey={api_key}",
-    "binance": "https://api.bscscan.com/api?module=proxy&action=eth_getTransactionByHash&txhash={txid}&apikey={api_key}",
-    "polygon": "https://api.polygonscan.com/api?module=proxy&action=eth_getTransactionByHash&txhash={txid}&apikey={api_key}",
-    "tron": "https://api.trongrid.io/v1/transactions/{txid}",
-    "xrp": "https://s1.ripple.com:51234", 
-    "solana": "https://api.mainnet-beta.solana.com/",
-    "cardano": "https://cardano-mainnet.blockfrost.io/api/v0/txs/{txid}",
-    "algorand": "https://algoindexer.algoexplorerapi.io/v2/transactions/{txid}"
-}
+CHAINLIST_API = "https://chainid.network/chains.json"
 
 API_KEYS = {
     "ethereum": os.getenv("ETHERSCAN_API_KEY"),
@@ -26,11 +16,12 @@ API_KEYS = {
     "cardano": os.getenv("BLOCKFROST_API_KEY")
 }
 
-def convert_time(timestamp):
+def get_chain_data():
     try:
-        return datetime.utcfromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M:%S UTC')
+        response = requests.get(CHAINLIST_API)
+        return response.json()
     except:
-        return "N/A"
+        return []
 
 def detect_network(txid):
     if txid.startswith("0x") and len(txid) == 66:
@@ -46,40 +37,35 @@ def detect_network(txid):
     else:
         return "unknown"
 
+def convert_time(timestamp):
+    try:
+        return datetime.utcfromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M:%S UTC')
+    except:
+        return "N/A"
+
 def get_transaction_by_txid(txid):
     network = detect_network(txid)
     if network == "unknown":
         return {"TxID": txid, "Network": "Unknown", "Status": "Failed"}
     try:
-        url = NETWORK_APIS[network].format(txid=txid, api_key=API_KEYS.get(network, ""))
-        response = requests.get(url)
-        data = response.json()
-
-        if network in ["ethereum", "binance", "polygon"]:
-            tx = data.get("result", {})
-            return {
-                "TxID": txid,
-                "Network": network.capitalize(),
-                "From": tx.get("from", "N/A"),
-                "To": tx.get("to", "N/A"),
-                "Amount": float(int(tx.get("value", "0"), 16)) / 1e18 if "value" in tx else "N/A",
-                "Timestamp": "Unknown",
-                "Fee": float(int(tx.get("gasPrice", "0"), 16)) / 1e18 if "gasPrice" in tx else "N/A",
-                "Status": "Success"
-            }
-        elif network == "bitcoin":
-            tx = data.get("data", {}).get(txid, {}).get("transaction", {})
-            return {
-                "TxID": txid,
-                "Network": "Bitcoin",
-                "From": "N/A",
-                "To": "N/A",
-                "Amount": tx.get("balance_change", "N/A"),
-                "Timestamp": convert_time(tx.get("time")),
-                "Fee": tx.get("fee", "N/A"),
-                "Status": "Confirmed"
-            }
-    except Exception as e:
+        chains = get_chain_data()
+        for chain in chains:
+            if chain.get("shortName", "").lower() == network:
+                api_url = chain.get("rpc", [""])[0]
+                if api_url:
+                    response = requests.get(api_url)
+                    data = response.json()
+                    return {
+                        "TxID": txid,
+                        "Network": chain.get("name", "Unknown"),
+                        "From": data.get("from", "N/A"),
+                        "To": data.get("to", "N/A"),
+                        "Amount": data.get("value", "N/A"),
+                        "Timestamp": convert_time(data.get("timeStamp", "0")),
+                        "Fee": data.get("gasPrice", "N/A"),
+                        "Status": "Success"
+                    }
+    except:
         return {"error": "Internal error fetching transaction"}
 
 @app.route("/transactions", methods=["POST"])
