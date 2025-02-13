@@ -9,12 +9,14 @@ app.debug = True
 
 CHAINLIST_API = "https://chainid.network/chains.json"
 BLOCKCHAIR_API = "https://api.blockchair.com/"
+ALLCHAINS_API = "https://api.allchains.info/v1/chains"
 
 API_KEYS = {
     "ethereum": os.getenv("ETHERSCAN_API_KEY"),
+    "bitcoin": os.getenv("BLOCKCHAIR_API_KEY"),
     "binance": os.getenv("BSCSCAN_API_KEY"),
     "polygon": os.getenv("POLYGONSCAN_API_KEY"),
-    "bitcoin": os.getenv("BLOCKCHAIR_API_KEY")
+    "cardano": os.getenv("BLOCKFROST_API_KEY")
 }
 
 def get_chain_data():
@@ -51,30 +53,35 @@ def get_transaction_by_txid(txid):
     
     try:
         if network == "bitcoin":
-            response = requests.get(f"{BLOCKCHAIR_API}{network}/dashboards/transaction/{txid}")
-            data = response.json()["data"][txid]["transaction"]
+            response = requests.get(f"{BLOCKCHAIR_API}bitcoin/dashboards/transaction/{txid}")
+            data = response.json()["data"][txid]
+            return {
+                "TxID": txid,
+                "Network": "Bitcoin",
+                "From": data["inputs"][0]["recipient"] if "inputs" in data else "N/A",
+                "To": data["outputs"][0]["recipient"] if "outputs" in data else "N/A",
+                "Amount": data["outputs"][0]["value"] if "outputs" in data else "N/A",
+                "Timestamp": convert_time(data.get("time", "0")),
+                "Fee": data.get("fee", "N/A"),
+                "Status": "Success"
+            }
+        elif network == "ethereum":
+            response = requests.get(f"https://api.etherscan.io/api?module=proxy&action=eth_getTransactionByHash&txhash={txid}&apikey={API_KEYS['ethereum']}")
+            data = response.json()["result"]
+            return {
+                "TxID": txid,
+                "Network": "Ethereum",
+                "From": data.get("from", "N/A"),
+                "To": data.get("to", "N/A"),
+                "Amount": data.get("value", "N/A"),
+                "Timestamp": "N/A",  # Requires further conversion
+                "Fee": data.get("gasPrice", "N/A"),
+                "Status": "Success"
+            }
         else:
-            chains = get_chain_data()
-            for chain in chains:
-                if chain.get("shortName", "").lower() == network:
-                    api_url = chain.get("rpc", [""])[0]
-                    if api_url:
-                        response = requests.get(api_url)
-                        data = response.json()
-                        break
-        
-        return {
-            "TxID": txid,
-            "Network": network.capitalize(),
-            "From": data.get("from", "N/A"),
-            "To": data.get("to", "N/A"),
-            "Amount": data.get("value", "N/A"),
-            "Timestamp": convert_time(data.get("timeStamp", "0")),
-            "Fee": data.get("gasPrice", "N/A"),
-            "Status": "Success"
-        }
+            return {"TxID": txid, "Network": network, "Status": "Unsupported"}
     except:
-        return {"TxID": txid, "Network": network.capitalize(), "Status": "Failed"}
+        return {"error": "Internal error fetching transaction"}
 
 @app.route("/transactions", methods=["POST"])
 def get_multiple_transactions():
